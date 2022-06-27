@@ -1,5 +1,10 @@
-//! android-properties is a rust wrapper for bionic property-related syscalls
-
+//! A thin rust wrapper for Andoird system properties.
+//!
+//! This crate is similar to the `android-properties` crate with the exception that
+//! the necessary Android libc symbols are loaded dynamically instead of linked
+//! statically. In practice this means that the same binary will work with old and
+//! new versions of Android, even though the API for reading system properties changed
+//! around Android L.
 use std::{
     ffi::{CStr, CString},
     os::raw::{c_char, c_int, c_void},
@@ -8,66 +13,46 @@ use std::{
 #[cfg(target_os = "android")]
 use std::mem;
 
-/// A name/value pair.
-#[derive(Debug)]
-pub struct Property {
-    pub name: String,
-    pub value: String,
-}
-
-struct PropCallbackData {
-    props: Vec<Property>,
-    read_callback_fn: SystemPropertyReadCallbackFn,
-}
-
-unsafe fn property_callback(cookie: *mut Property, name: *const c_char, value: *const c_char, _serial: u32) {
-    let cname = CStr::from_ptr(name);
+unsafe fn property_callback(payload: *mut String, _name: *const c_char, value: *const c_char, _serial: u32) {
     let cvalue = CStr::from_ptr(value);
-    (*cookie).name = cname.to_str().unwrap().to_string();
-    (*cookie).value = cvalue.to_str().unwrap().to_string();
+    (*payload) = cvalue.to_str().unwrap().to_string();
 }
 
-unsafe fn foreach_property_callback(property_info: *const c_void, cookie: *mut PropCallbackData) {
-    let mut prop = Property {
-        name: String::new(),
-        value: String::new(),
-    };
-
-    ((*cookie).read_callback_fn)(property_info, property_callback, &mut prop);
-
-    (*cookie).props.push(prop);
-}
-
-type Callback = unsafe fn(*mut Property, *const c_char, *const c_char, u32);
-type ForEachCallback = unsafe fn(*const c_void, *mut PropCallbackData);
+type Callback = unsafe fn(*mut String, *const c_char, *const c_char, u32);
 
 type SystemPropertyGetFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
-type SystemPropertySetFn = unsafe extern "C" fn(*const c_char, *const c_char) -> c_int;
 type SystemPropertyFindFn = unsafe extern "C" fn(*const c_char) -> *const c_void;
-type SystemPropertyReadCallbackFn = unsafe extern "C" fn(*const c_void, Callback, *mut Property) -> *const c_void;
-type SystemPropertyForEachFn = unsafe extern "C" fn(ForEachCallback, *mut PropCallbackData) -> c_int;
+type SystemPropertyReadCallbackFn = unsafe extern "C" fn(*const c_void, Callback, *mut String) -> *const c_void;
 
 #[derive(Debug)]
-/// An object that can retrieve and modify android properties
-pub struct AndroidProperties {
+/// An object that can retrieve android system properties.
+///
+/// ## Example
+///
+/// ```
+/// use android_system_properties::AndroidSystemProperties;
+///
+/// let properties = AndroidSystemProperties::new();
+///
+/// if let Some(value) = properties.get("persist.sys.timezone") {
+///    println!("{}", value);
+/// }
+/// ```
+pub struct AndroidSystemProperties {
     libc_so: *mut c_void,
     get_fn: Option<SystemPropertyGetFn>,
-    set_fn: Option<SystemPropertySetFn>,
     find_fn: Option<SystemPropertyFindFn>,
     read_callback_fn: Option<SystemPropertyReadCallbackFn>,
-    for_each_fn: Option<SystemPropertyForEachFn>,
 }
 
-impl AndroidProperties {
+impl AndroidSystemProperties {
     #[cfg(not(target_os = "android"))]
     /// Create an entry point for accessing Android properties.
     pub fn new() -> Self {
-        AndroidProperties {
+        AndroidSystemProperties {
             libc_so: std::ptr::null_mut(),
-            set_fn: None,
             find_fn: None,
             read_callback_fn: None,
-            for_each_fn: None,
             get_fn: None,
         }
     }
@@ -78,7 +63,7 @@ impl AndroidProperties {
         let libc_name = CString::new("libc.so").unwrap();
         let libc_so = unsafe { libc::dlopen(libc_name.as_ptr(), libc::RTLD_NOLOAD) };
 
-        let mut properties = AndroidProperties {
+        let mut properties = AndroidSystemProperties {
             libc_so,
             set_fn: None,
             find_fn: None,
@@ -126,7 +111,9 @@ impl AndroidProperties {
         properties
     }
 
-    /// Retrieve a property with name `name`. Returns None if the operation fails.
+    /// Retrieve a system property.
+    ///
+    /// Returns None if the operation fails.
     pub fn get(&self, name: &str) -> Option<String> {
         let cname = CString::new(name).unwrap();
 
@@ -138,16 +125,13 @@ impl AndroidProperties {
                 return None;
             }
 
-            let mut result = Property {
-                name: String::new(),
-                value: String::new(),
-            };
+            let mut result = String::new();
 
             unsafe {
                 (read_callback_fn)(info, property_callback, &mut result);
             }
 
-            return Some((result).value);
+            return Some(result);
         }
 
         // Fall back to the older approach.
@@ -164,69 +148,14 @@ impl AndroidProperties {
             None
         }
     }
-
-    /// Set system property `name` to `value`, creating the system property if it doesn't already exist.
-    pub fn set(&self, name: &str, value: &str) -> Result<(), String> {
-        let cname = CString::new(name).unwrap();
-        let cvalue = CString::new(value).unwrap();
-        if let Some(set_fn) = self.set_fn {
-            let ret = unsafe { (set_fn)(cname.as_ptr(), cvalue.as_ptr()) };
-            if ret >= 0 {
-                Ok(())
-            } else {
-                Err(format!("Failed to set Android property {:?} to {:?} (error code: {})", name, value, ret))
-            }
-        } else {
-            Err(format!("Unable to set any Android preperty"))
-        }
-    }
-
-
-    /// Returns an iterator over all system properties.
-    pub fn iter(&self) -> impl Iterator<Item = Property> {
-        if let (Some(for_each_fn), Some(read_callback_fn)) = (self.for_each_fn, self.read_callback_fn) {
-            let mut property_data = PropCallbackData {
-                props: Vec::new(),
-                read_callback_fn,
-            };
-
-            unsafe {
-                (for_each_fn)(foreach_property_callback, &mut property_data);
-            }
-
-            property_data.props.into_iter()
-        } else {
-            Vec::new().into_iter()
-        }
-    }
 }
 
-impl Drop for AndroidProperties {
+impl Drop for AndroidSystemProperties {
     fn drop(&mut self) {
         if !self.libc_so.is_null() {
             unsafe {
                 libc::dlclose(self.libc_so);
             }    
         }
-    }
-}
-
-#[test]
-fn simple() {
-    let properties = AndroidProperties::new();
-
-    let hello = "hello";
-
-    if properties.set(hello, "bonjour").is_err() {
-        println!("Unable to set property");        
-    }
-
-    if let Some(val) = properties.get(hello) {
-        assert_eq!(&val[..], "bonjour");
-    }
-
-    println!("Listing all properties:");
-    for property in properties.iter() {
-        println!(" - {:?}: {:?}", property.name, property.value);
     }
 }
