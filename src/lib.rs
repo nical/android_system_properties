@@ -65,10 +65,8 @@ impl AndroidSystemProperties {
 
         let mut properties = AndroidSystemProperties {
             libc_so,
-            set_fn: None,
             find_fn: None,
             read_callback_fn: None,
-            for_each_fn: None,
             get_fn: None,
         };
 
@@ -94,12 +92,6 @@ impl AndroidSystemProperties {
 
             properties.find_fn = load_fn(libc_so, "__system_property_find")
                 .map(|raw| mem::transmute::<*const c_void, SystemPropertyFindFn>(raw));
-
-            properties.set_fn = load_fn(libc_so, "__system_property_set")
-                .map(|raw| mem::transmute::<*const c_void, SystemPropertySetFn>(raw));
-
-            properties.for_each_fn = load_fn(libc_so, "__system_property_foreach")
-                .map(|raw| mem::transmute::<*const c_void, SystemPropertyForEachFn>(raw));
 
             // Fallback for old versions of Android.
             if properties.read_callback_fn.is_none() || properties.find_fn.is_none() {
