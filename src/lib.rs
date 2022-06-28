@@ -128,14 +128,23 @@ impl AndroidSystemProperties {
 
         // Fall back to the older approach.
         if let Some(get_fn) = self.get_fn {
+            // The constant is PROP_VALUE_MAX in Android's libc/include/sys/system_properties.h
             const PROPERTY_VALUE_MAX: usize = 92;
             let cvalue = CString::new(Vec::with_capacity(PROPERTY_VALUE_MAX)).unwrap();
             let raw = cvalue.into_raw();
-            let ret = unsafe { (get_fn)(cname.as_ptr(), raw) };
-            match ret {
-                len if len > 0 => unsafe { Some(String::from_raw_parts(raw as *mut u8, len as usize, PROPERTY_VALUE_MAX)) },
-                _ => None,
-            }    
+
+            let len = unsafe { (get_fn)(cname.as_ptr(), raw) };
+
+            let bytes = unsafe {
+                let raw: *mut u8 = std::mem::transmute(raw); // Cast from *mut i8.
+                Vec::from_raw_parts(raw, len as usize, PROPERTY_VALUE_MAX)
+            };
+
+            if len > 0 {
+                String::from_utf8(bytes).ok()
+            } else {
+                None
+            }
         } else {
             None
         }
