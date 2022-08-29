@@ -59,6 +59,84 @@ type SystemPropertyFindFn = unsafe extern "C" fn(*const c_char) -> *const c_void
 #[cfg(target_os = "android")]
 type SystemPropertyReadCallbackFn = unsafe extern "C" fn(*const c_void, Callback, *mut String) -> *const c_void;
 
+#[cfg(target_os = "android")]
+#[derive(Debug)]
+enum Implementation {
+    New {
+        find_fn: SystemPropertyFindFn,
+        read_callback_fn: SystemPropertyReadCallbackFn,
+    },
+    Old {
+        get_fn: SystemPropertyGetFn,
+    }
+}
+
+#[cfg(target_os = "android")]
+unsafe fn load_fn(libc_so: *mut c_void, cname: &[u8]) -> Option<*const c_void> {
+    match libc::dlsym(libc_so, cname.as_ptr().cast()) {
+        func if !func.is_null() => Some(func),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "android")]
+impl Implementation {
+    unsafe fn load_new(libc_so: *mut c_void) -> Option<Implementation> {
+        let read_callback_fn = load_fn(libc_so, b"__system_property_read_callback\0")?;
+        let find_fn = load_fn(libc_so, b"__system_property_find\0")?;
+        Some(Implementation::New {
+            find_fn: mem::transmute(find_fn),
+            read_callback_fn: mem::transmute(read_callback_fn),
+        })
+    }
+
+    unsafe fn load_old(libc_so: *mut c_void) -> Option<Implementation> {
+        let get_fn = load_fn(libc_so, b"__system_property_get\0")?;
+        Some(Implementation::Old {
+            get_fn: mem::transmute(get_fn),
+        })
+    }
+
+    unsafe fn new(libc_so: *mut c_void) -> Option<Self> {
+        Self::load_new(libc_so)
+            .or_else(|| Self::load_old(libc_so))
+    }
+
+    fn get(&self, cname: *const c_char) -> Option<String> {
+        match self {
+            Implementation::New { find_fn, read_callback_fn } => {
+                let info = unsafe { (find_fn)(cname) };
+
+                if info.is_null() {
+                    return None;
+                }
+
+                let mut result = String::new();
+
+                unsafe { (read_callback_fn)(info, property_callback, &mut result) };
+
+                Some(result)
+            }
+            Implementation::Old { get_fn } => {
+                // The constant is PROP_VALUE_MAX in Android's libc/include/sys/system_properties.h
+                const PROPERTY_VALUE_MAX: usize = 92;
+                let mut buffer: Vec<u8> = Vec::with_capacity(PROPERTY_VALUE_MAX);
+                let raw = buffer.as_mut_ptr().cast();
+
+                let len = unsafe { (get_fn)(cname, raw) };
+
+                if len > 0 {
+                    assert!(len as usize <= buffer.capacity());
+                    unsafe { buffer.set_len(len as usize); }
+                    String::from_utf8(buffer).ok()
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 /// An object that can retrieve android system properties.
 ///
@@ -77,11 +155,7 @@ pub struct AndroidSystemProperties {
     #[cfg(target_os = "android")]
     libc_so: *mut c_void,
     #[cfg(target_os = "android")]
-    get_fn: Option<SystemPropertyGetFn>,
-    #[cfg(target_os = "android")]
-    find_fn: Option<SystemPropertyFindFn>,
-    #[cfg(target_os = "android")]
-    read_callback_fn: Option<SystemPropertyReadCallbackFn>,
+    implementation: Option<Implementation>,
 }
 
 impl AndroidSystemProperties {
@@ -98,39 +172,14 @@ impl AndroidSystemProperties {
 
         let mut properties = AndroidSystemProperties {
             libc_so,
-            find_fn: None,
-            read_callback_fn: None,
-            get_fn: None,
+            implementation: None,
         };
 
         if libc_so.is_null() {
             return properties;
         }
 
-
-        unsafe fn load_fn(libc_so: *mut c_void, name: &[u8]) -> Option<*const c_void> {
-            let fn_ptr = libc::dlsym(libc_so, name.as_ptr().cast());
-
-            if fn_ptr.is_null() {
-                return None;
-            }
-
-            Some(fn_ptr)
-        }
-
-        unsafe {
-            properties.read_callback_fn = load_fn(libc_so, b"__system_property_read_callback\0")
-                .map(|raw| mem::transmute::<*const c_void, SystemPropertyReadCallbackFn>(raw));
-
-            properties.find_fn = load_fn(libc_so, b"__system_property_find\0")
-                .map(|raw| mem::transmute::<*const c_void, SystemPropertyFindFn>(raw));
-
-            // Fallback for old versions of Android.
-            if properties.read_callback_fn.is_none() || properties.find_fn.is_none() {
-                properties.get_fn = load_fn(libc_so, b"__system_property_get\0")
-                    .map(|raw| mem::transmute::<*const c_void, SystemPropertyGetFn>(raw));
-            }
-        }
+        properties.implementation = unsafe { Implementation::new(libc_so) };
 
         properties
     }
@@ -154,49 +203,11 @@ impl AndroidSystemProperties {
         return (name, None).1;
 
         #[cfg(target_os = "android")]
-        return self.get_impl(name);
-    }
-
-    #[cfg(target_os = "android")]
-    fn get_impl(&self, name: &str) -> Option<String> {
-        let cname = CString::new(name).ok()?;
-
-        // If available, use the recommended approach to accessing properties (Android L and onward).
-        if let (Some(find_fn), Some(read_callback_fn)) = (self.find_fn, self.read_callback_fn) {
-            let info = unsafe { (find_fn)(cname.as_ptr()) };
-
-            if info.is_null() {
-                return None;
-            }
-
-            let mut result = String::new();
-
-            unsafe {
-                (read_callback_fn)(info, property_callback, &mut result);
-            }
-
-            return Some(result);
-        }
-
-        // Fall back to the older approach.
-        if let Some(get_fn) = self.get_fn {
-            // The constant is PROP_VALUE_MAX in Android's libc/include/sys/system_properties.h
-            const PROPERTY_VALUE_MAX: usize = 92;
-            let mut buffer: Vec<u8> = Vec::with_capacity(PROPERTY_VALUE_MAX);
-            let raw = buffer.as_mut_ptr() as *mut c_char;
-
-            let len = unsafe { (get_fn)(cname.as_ptr(), raw) };
-
-            if len > 0 {
-                assert!(len as usize <= buffer.capacity());
-                unsafe { buffer.set_len(len as usize); }
-                String::from_utf8(buffer).ok()
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+        return {
+            let implementation = self.implementation.as_ref()?;
+            let cname = CString::new(name).ok()?;
+            implementation.get(cname.as_ptr().cast())
+        };
     }
 }
 
