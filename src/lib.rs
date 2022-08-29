@@ -60,8 +60,7 @@ impl AndroidSystemProperties {
     #[cfg(target_os = "android")]
     /// Create an entry point for accessing Android properties.
     pub fn new() -> Self {
-        let libc_name = CString::new("libc.so").unwrap();
-        let libc_so = unsafe { libc::dlopen(libc_name.as_ptr(), libc::RTLD_NOLOAD) };
+        let libc_so = unsafe { libc::dlopen(b"libc.so\0".as_ptr().cast(), libc::RTLD_NOLOAD) };
 
         let mut properties = AndroidSystemProperties {
             libc_so,
@@ -75,9 +74,8 @@ impl AndroidSystemProperties {
         }
 
 
-        unsafe fn load_fn(libc_so: *mut c_void, name: &str) -> Option<*const c_void> {
-            let cname = CString::new(name).unwrap();
-            let fn_ptr = libc::dlsym(libc_so, cname.as_ptr());
+        unsafe fn load_fn(libc_so: *mut c_void, name: &[u8]) -> Option<*const c_void> {
+            let fn_ptr = libc::dlsym(libc_so, name.as_ptr().cast());
 
             if fn_ptr.is_null() {
                 return None;
@@ -87,15 +85,15 @@ impl AndroidSystemProperties {
         }
 
         unsafe {
-            properties.read_callback_fn = load_fn(libc_so, "__system_property_read_callback")
+            properties.read_callback_fn = load_fn(libc_so, b"__system_property_read_callback\0")
                 .map(|raw| mem::transmute::<*const c_void, SystemPropertyReadCallbackFn>(raw));
 
-            properties.find_fn = load_fn(libc_so, "__system_property_find")
+            properties.find_fn = load_fn(libc_so, b"__system_property_find\0")
                 .map(|raw| mem::transmute::<*const c_void, SystemPropertyFindFn>(raw));
 
             // Fallback for old versions of Android.
             if properties.read_callback_fn.is_none() || properties.find_fn.is_none() {
-                properties.get_fn = load_fn(libc_so, "__system_property_get")
+                properties.get_fn = load_fn(libc_so, b"__system_property_get\0")
                     .map(|raw| mem::transmute::<*const c_void, SystemPropertyGetFn>(raw));
             }
         }
