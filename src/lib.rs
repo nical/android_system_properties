@@ -36,23 +36,27 @@
 //! [LICENSE-APACHE]: https://github.com/nical/android_system_properties/blob/804681c5c1c93d4fab29c1a2f47b7d808dc70fd3/LICENSE-APACHE
 //! [LICENSE-MIT]: https://github.com/nical/android_system_properties/blob/804681c5c1c93d4fab29c1a2f47b7d808dc70fd3/LICENSE-MIT
 
+#[cfg(target_os = "android")]
 use std::{
     ffi::{CStr, CString},
+    mem,
     os::raw::{c_char, c_int, c_void},
 };
 
 #[cfg(target_os = "android")]
-use std::mem;
-
 unsafe fn property_callback(payload: *mut String, _name: *const c_char, value: *const c_char, _serial: u32) {
     let cvalue = CStr::from_ptr(value);
     (*payload) = cvalue.to_str().unwrap().to_string();
 }
 
+#[cfg(target_os = "android")]
 type Callback = unsafe fn(*mut String, *const c_char, *const c_char, u32);
 
+#[cfg(target_os = "android")]
 type SystemPropertyGetFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
+#[cfg(target_os = "android")]
 type SystemPropertyFindFn = unsafe extern "C" fn(*const c_char) -> *const c_void;
+#[cfg(target_os = "android")]
 type SystemPropertyReadCallbackFn = unsafe extern "C" fn(*const c_void, Callback, *mut String) -> *const c_void;
 
 #[derive(Debug)]
@@ -70,9 +74,13 @@ type SystemPropertyReadCallbackFn = unsafe extern "C" fn(*const c_void, Callback
 /// }
 /// ```
 pub struct AndroidSystemProperties {
+    #[cfg(target_os = "android")]
     libc_so: *mut c_void,
+    #[cfg(target_os = "android")]
     get_fn: Option<SystemPropertyGetFn>,
+    #[cfg(target_os = "android")]
     find_fn: Option<SystemPropertyFindFn>,
+    #[cfg(target_os = "android")]
     read_callback_fn: Option<SystemPropertyReadCallbackFn>,
 }
 
@@ -80,12 +88,7 @@ impl AndroidSystemProperties {
     #[cfg(not(target_os = "android"))]
     /// Create an entry point for accessing Android properties.
     pub fn new() -> Self {
-        AndroidSystemProperties {
-            libc_so: std::ptr::null_mut(),
-            find_fn: None,
-            read_callback_fn: None,
-            get_fn: None,
-        }
+        AndroidSystemProperties {}
     }
 
     #[cfg(target_os = "android")]
@@ -147,6 +150,15 @@ impl AndroidSystemProperties {
     /// }
     /// ```
     pub fn get(&self, name: &str) -> Option<String> {
+        #[cfg(not(target_os = "android"))]
+        return (name, None).1;
+
+        #[cfg(target_os = "android")]
+        return self.get_impl(name);
+    }
+
+    #[cfg(target_os = "android")]
+    fn get_impl(&self, name: &str) -> Option<String> {
         let cname = CString::new(name).ok()?;
 
         // If available, use the recommended approach to accessing properties (Android L and onward).
@@ -188,6 +200,7 @@ impl AndroidSystemProperties {
     }
 }
 
+#[cfg(target_os = "android")]
 impl Drop for AndroidSystemProperties {
     fn drop(&mut self) {
         if !self.libc_so.is_null() {
