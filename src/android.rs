@@ -1,5 +1,5 @@
 use std::{
-    ffi::{CStr, CString},
+    ffi::CStr,
     mem,
     os::raw::{c_char, c_int, c_void},
     ptr::NonNull,
@@ -130,8 +130,7 @@ impl Properties {
         Some(Self { libc_so, implementation })
     }
 
-    pub(crate) fn get(&self, name: &str) -> Option<String> {
-        let cname = CString::new(name).ok()?;
+    pub(crate) fn get(&self, cname: &CStr) -> Option<String> {
         self.implementation.get(cname.as_ptr().cast())
     }
 }

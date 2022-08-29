@@ -86,6 +86,30 @@ impl AndroidSystemProperties {
         return (name, None).1;
 
         #[cfg(target_os = "android")]
+        return self.properties.as_ref()?.get(&std::ffi::CString::new(name).ok()?);
+    }
+
+    /// Retrieve a system property using a [`CStr`] key.
+    ///
+    /// Returns None if the operation fails.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use android_system_properties::AndroidSystemProperties;
+    /// # use std::ffi::CStr;
+    /// let properties = AndroidSystemProperties::new();
+    ///
+    /// let key = unsafe { CStr::from_bytes_with_nul_unchecked(b"persist.sys.timezone\0") };
+    /// if let Some(value) = properties.get_from_cstr(key) {
+    ///     println!("{}", value);
+    /// }
+    /// ```
+    pub fn get_from_cstr(&self, name: &std::ffi::CStr) -> Option<String> {
+        #[cfg(not(target_os = "android"))]
+        return (name, None).1;
+
+        #[cfg(target_os = "android")]
         return self.properties.as_ref()?.get(name);
     }
 }
