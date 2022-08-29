@@ -5,6 +5,37 @@
 //! statically. In practice this means that the same binary will work with old and
 //! new versions of Android, even though the API for reading system properties changed
 //! around Android L.
+//!
+//! ## Example
+//!
+//! ```rust
+//! use android_system_properties::AndroidSystemProperties;
+//!
+//! let properties = AndroidSystemProperties::new();
+//!
+//! if let Some(value) = properties.get("persist.sys.timezone") {
+//!    println!("{}", value);
+//! }
+//! ```
+//!
+//! ## Listing and setting properties
+//!
+//! For the sake of simplicity this crate currently only contains what's needed by wgpu.
+//! The implementations for listing and setting properties can be added back if anyone needs
+//! them (let me know by filing an issue).
+//!
+//! ## License
+//!
+//! Licensed under either of
+//!
+//!  * Apache License, Version 2.0 ([LICENSE-APACHE] or <http://www.apache.org/licenses/LICENSE-2.0>)
+//!  * MIT license ([LICENSE-MIT] or <http://opensource.org/licenses/MIT>)
+//!
+//! at your option.
+//!
+//! [LICENSE-APACHE]: https://github.com/nical/android_system_properties/blob/804681c5c1c93d4fab29c1a2f47b7d808dc70fd3/LICENSE-APACHE
+//! [LICENSE-MIT]: https://github.com/nical/android_system_properties/blob/804681c5c1c93d4fab29c1a2f47b7d808dc70fd3/LICENSE-MIT
+
 use std::{
     ffi::{CStr, CString},
     os::raw::{c_char, c_int, c_void},
@@ -151,7 +182,7 @@ impl Drop for AndroidSystemProperties {
         if !self.libc_so.is_null() {
             unsafe {
                 libc::dlclose(self.libc_so);
-            }    
+            }
         }
     }
 }
