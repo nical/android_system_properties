@@ -19,6 +19,9 @@ type SystemPropertyReadCallbackFn = unsafe extern "C" fn(*const c_void, Callback
 #[derive(Debug)]
 struct LibC(NonNull<c_void>);
 
+unsafe impl Send for LibC {}
+unsafe impl Sync for LibC {}
+
 impl LibC {
     fn new() -> Option<Self> {
         let c = unsafe { libc::dlopen(b"libc.so\0".as_ptr().cast(), libc::RTLD_NOLOAD) };
