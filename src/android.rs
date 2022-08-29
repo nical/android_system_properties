@@ -74,9 +74,11 @@ impl Implementation {
         })
     }
 
-    unsafe fn new(libc_so: *mut c_void) -> Option<Self> {
-        Self::load_new(libc_so)
-            .or_else(|| Self::load_old(libc_so))
+    fn new(libc_so: &mut LibC) -> Option<Self> {
+        unsafe {
+            Self::load_new(libc_so.as_mut())
+                .or_else(|| Self::load_old(libc_so.as_mut()))
+        }
     }
 
     fn get(&self, cname: *const c_char) -> Option<String> {
@@ -124,7 +126,7 @@ impl Properties {
     /// Create an entry point for accessing Android properties.
     pub(crate) fn new() -> Option<Self> {
         let mut libc_so = LibC::new()?;
-        let implementation = unsafe { Implementation::new(libc_so.as_mut())? };
+        let implementation = Implementation::new(&mut libc_so)?;
         Some(Self { libc_so, implementation })
     }
 
