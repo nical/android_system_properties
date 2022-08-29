@@ -137,6 +137,17 @@ impl AndroidSystemProperties {
     /// Retrieve a system property.
     ///
     /// Returns None if the operation fails.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use android_system_properties::AndroidSystemProperties;
+    /// let properties = AndroidSystemProperties::new();
+    ///
+    /// if let Some(value) = properties.get("persist.sys.timezone") {
+    ///     println!("{}", value);
+    /// }
+    /// ```
     pub fn get(&self, name: &str) -> Option<String> {
         let cname = CString::new(name).unwrap();
 
