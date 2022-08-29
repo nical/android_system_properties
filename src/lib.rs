@@ -55,7 +55,7 @@ mod android;
 /// ```
 pub struct AndroidSystemProperties {
     #[cfg(target_os = "android")]
-    properties: android::Properties,
+    properties: Option<android::Properties>,
 }
 
 impl AndroidSystemProperties {
@@ -86,6 +86,6 @@ impl AndroidSystemProperties {
         return (name, None).1;
 
         #[cfg(target_os = "android")]
-        return self.properties.get(name);
+        return self.properties.as_ref()?.get(name);
     }
 }

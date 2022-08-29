@@ -2,6 +2,7 @@ use std::{
     ffi::{CStr, CString},
     mem,
     os::raw::{c_char, c_int, c_void},
+    ptr::NonNull,
 };
 
 unsafe fn property_callback(payload: *mut String, _name: *const c_char, value: *const c_char, _serial: u32) {
@@ -14,6 +15,26 @@ type Callback = unsafe fn(*mut String, *const c_char, *const c_char, u32);
 type SystemPropertyGetFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
 type SystemPropertyFindFn = unsafe extern "C" fn(*const c_char) -> *const c_void;
 type SystemPropertyReadCallbackFn = unsafe extern "C" fn(*const c_void, Callback, *mut String) -> *const c_void;
+
+#[derive(Debug)]
+struct LibC(NonNull<c_void>);
+
+impl LibC {
+    fn new() -> Option<Self> {
+        let c = unsafe { libc::dlopen(b"libc.so\0".as_ptr().cast(), libc::RTLD_NOLOAD) };
+        Some(Self(NonNull::new(c)?))
+    }
+
+    unsafe fn as_mut(&mut self) -> *mut c_void {
+        self.0.as_mut()
+    }
+}
+
+impl Drop for LibC {
+    fn drop(&mut self) {
+        unsafe { libc::dlclose(self.0.as_mut()) };
+    }
+}
 
 #[derive(Debug)]
 enum Implementation {
@@ -92,42 +113,20 @@ impl Implementation {
 
 #[derive(Debug)]
 pub struct Properties {
-    libc_so: *mut c_void,
-    implementation: Option<Implementation>,
+    #[allow(unused)] libc_so: LibC,
+    implementation: Implementation,
 }
 
 impl Properties {
     /// Create an entry point for accessing Android properties.
-    pub(crate) fn new() -> Self {
-        let libc_so = unsafe { libc::dlopen(b"libc.so\0".as_ptr().cast(), libc::RTLD_NOLOAD) };
-
-        let mut properties = Self {
-            libc_so,
-            implementation: None,
-        };
-
-        if libc_so.is_null() {
-            return properties;
-        }
-
-        properties.implementation = unsafe { Implementation::new(libc_so) };
-
-        properties
+    pub(crate) fn new() -> Option<Self> {
+        let mut libc_so = LibC::new()?;
+        let implementation = unsafe { Implementation::new(libc_so.as_mut())? };
+        Some(Self { libc_so, implementation })
     }
 
     pub(crate) fn get(&self, name: &str) -> Option<String> {
-        let implementation = self.implementation.as_ref()?;
         let cname = CString::new(name).ok()?;
-        implementation.get(cname.as_ptr().cast())
-    }
-}
-
-impl Drop for Properties {
-    fn drop(&mut self) {
-        if !self.libc_so.is_null() {
-            unsafe {
-                libc::dlclose(self.libc_so);
-            }
-        }
+        self.implementation.get(cname.as_ptr().cast())
     }
 }
