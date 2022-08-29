@@ -107,7 +107,7 @@ impl AndroidSystemProperties {
     ///
     /// Returns None if the operation fails.
     pub fn get(&self, name: &str) -> Option<String> {
-        let cname = CString::new(name).unwrap();
+        let cname = CString::new(name).ok()?;
 
         // If available, use the recommended approach to accessing properties (Android L and onward).
         if let (Some(find_fn), Some(read_callback_fn)) = (self.find_fn, self.read_callback_fn) {
