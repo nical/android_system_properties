@@ -76,6 +76,9 @@ pub struct AndroidSystemProperties {
     read_callback_fn: Option<SystemPropertyReadCallbackFn>,
 }
 
+unsafe impl Send for AndroidSystemProperties {}
+unsafe impl Sync for AndroidSystemProperties {}
+
 impl AndroidSystemProperties {
     #[cfg(not(target_os = "android"))]
     /// Create an entry point for accessing Android properties.
